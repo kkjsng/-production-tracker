@@ -37,12 +37,34 @@ function calcPct(stagesMap, hasSec) {
 
 function statusCol(p) { if(p===100) return "#2a9d6a"; if(p>=66) return "#d4a843"; if(p>=33) return "#c47a3a"; return "#8a8a8a"; }
 function fmtTime(iso) { const d=new Date(iso); return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`; }
+function fmtDate(dateStr) { if(!dateStr) return ""; const d=new Date(dateStr+"T00:00:00"); return `${d.getMonth()+1}/${d.getDate()}`; }
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const target = new Date(dateStr+"T00:00:00");
+  return Math.round((target - today) / 86400000);
+}
 function getUserColor(user) { return ROLE_COLORS[user?.role] || "#8a8a8a"; }
-function findMaster(code, list) { return list.find(m => m.code.toLowerCase() === code.toLowerCase()); }
+function findMaster(code, list) { return list.find(m => m.code.toLowerCase() === (code||"").toLowerCase()); }
 function totalQty(csq) { return (csq||[]).reduce((s,r) => s + (r.qty||0), 0); }
 
 const IS = "w-full px-2.5 py-1.5 rounded border-[1.5px] border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-primary)] text-sm outline-none";
 const LS = "block text-[10px] text-[var(--text-secondary)] mb-0.5 font-mono uppercase tracking-wider";
+
+// ── Deadline Badge ──
+function DeadlineBadge({ deliveryDate, isDelivered, size = "sm" }) {
+  if (!deliveryDate) return null;
+  const days = daysUntil(deliveryDate);
+  let bg = "var(--bg-tertiary)", color = "var(--text-secondary)", label = `納期 ${fmtDate(deliveryDate)}`;
+  if (isDelivered) { bg = "rgba(42,157,106,0.12)"; color = "#2a9d6a"; }
+  else if (days < 0) { bg = "rgba(196,90,90,0.18)"; color = "#e06c6c"; label = `納期超過 ${Math.abs(days)}日`; }
+  else if (days === 0) { bg = "rgba(196,90,90,0.18)"; color = "#e06c6c"; label = "納期 本日"; }
+  else if (days <= 3) { bg = "rgba(196,90,90,0.15)"; color = "#e06c6c"; label = `納期 ${fmtDate(deliveryDate)} (あと${days}日)`; }
+  else if (days <= 7) { bg = "rgba(212,168,67,0.15)"; color = "#d4a843"; label = `納期 ${fmtDate(deliveryDate)} (あと${days}日)`; }
+  const pad = size === "lg" ? "3px 10px" : "1px 6px";
+  const fs = size === "lg" ? 12 : 10;
+  return <span className="rounded font-mono font-semibold whitespace-nowrap" style={{ background: bg, color, padding: pad, fontSize: fs }}>{label}</span>;
+}
 
 // ── Login Screen ──
 function LoginScreen({ users, onLogin, onRegister }) {
@@ -164,7 +186,6 @@ function Chip({ stage, checked, onToggle }) {
   );
 }
 
-// ── Bar ──
 function Bar({ p }) {
   return <div className="w-full h-1.5 rounded-full bg-[var(--track-bg)] overflow-hidden"><div className="h-full rounded-full transition-all duration-400" style={{ width: `${p}%`, background: statusCol(p) }} /></div>;
 }
@@ -176,8 +197,9 @@ function ItemFormModal({ item, onSave, onClose, colors, sizes, title }) {
     styleNo: item.style_no, name: item.name, season: item.season||"", factory: item.factory||"",
     unitPrice: item.unit_price||"", patterner: item.patterner||"", supplier: item.supplier||"",
     notes: item.notes||"", hasSecondary: item.has_secondary||false,
-    secName: item.secondary_name||"", secAddress: item.secondary_address||"", secPhone: item.secondary_phone||""
-  } : { styleNo:"",name:"",season:"26SS",factory:"",unitPrice:"",patterner:"",supplier:"",notes:"",hasSecondary:false,secName:"",secAddress:"",secPhone:"" });
+    secName: item.secondary_name||"", secAddress: item.secondary_address||"", secPhone: item.secondary_phone||"",
+    deliveryDate: item.delivery_date||""
+  } : { styleNo:"",name:"",season:"26AW",factory:"",unitPrice:"",patterner:"",supplier:"",notes:"",hasSecondary:false,secName:"",secAddress:"",secPhone:"",deliveryDate:"" });
   const [cq, setCq] = useState([{ colorCode: "", sizeCode: "", qty: 0 }]);
   const u = (k, v) => sF(p => ({ ...p, [k]: v }));
 
@@ -194,8 +216,9 @@ function ItemFormModal({ item, onSave, onClose, colors, sizes, title }) {
       <div onClick={e => e.stopPropagation()} className="bg-[var(--bg-primary)] rounded-lg p-7 w-[500px] max-w-[94vw] max-h-[90vh] overflow-y-auto border border-[var(--border)]">
         <h3 className="mb-4 text-[15px] font-mono">{title}</h3>
         <div className="flex flex-col gap-3">
-          <div className="grid grid-cols-2 gap-2.5"><div><label className={LS}>品番 *</label><input className={IS} value={f.styleNo} onChange={e=>u("styleNo",e.target.value)} placeholder="TN-26SS-XX" /></div><div><label className={LS}>シーズン</label><input className={IS} value={f.season} onChange={e=>u("season",e.target.value)} /></div></div>
+          <div className="grid grid-cols-2 gap-2.5"><div><label className={LS}>品番 *</label><input className={IS} value={f.styleNo} onChange={e=>u("styleNo",e.target.value)} placeholder="TN-26AW-XX" /></div><div><label className={LS}>シーズン</label><input className={IS} value={f.season} onChange={e=>u("season",e.target.value)} /></div></div>
           <div><label className={LS}>品名 *</label><input className={IS} value={f.name} onChange={e=>u("name",e.target.value)} /></div>
+          <div><label className={LS}>📅 納期</label><input className={IS} type="date" value={f.deliveryDate} onChange={e=>u("deliveryDate",e.target.value)} /></div>
           <CSQEdit data={cq} onChange={setCq} colors={colors} sizes={sizes} />
           <div className="grid grid-cols-2 gap-2.5"><div><label className={LS}>工場</label><input className={IS} value={f.factory} onChange={e=>u("factory",e.target.value)} /></div><div><label className={LS}>工場単価</label><input className={IS} value={f.unitPrice} onChange={e=>u("unitPrice",e.target.value)} placeholder="¥0,000" /></div></div>
           <div className="grid grid-cols-2 gap-2.5"><div><label className={LS}>パタンナー</label><input className={IS} value={f.patterner} onChange={e=>u("patterner",e.target.value)} /></div><div><label className={LS}>主要表地・糸 仕入先</label><input className={IS} value={f.supplier} onChange={e=>u("supplier",e.target.value)} /></div></div>
@@ -222,7 +245,7 @@ function ChatPanel({ itemId, currentUser }) {
 
   useEffect(() => {
     db.getChatMessages(itemId).then(setMessages);
-    const channel = supabase.channel(`chat-${itemId}`).on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages", filter: `item_id=eq.${itemId}` }, payload => {
+    const channel = supabase.channel(`chat-${itemId}`).on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages", filter: `item_id=eq.${itemId}` }, () => {
       db.getChatMessages(itemId).then(setMessages);
     }).subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -290,7 +313,7 @@ function DetailModal({ item, stagesMap, colorSizes, onClose, currentUser, colors
   };
 
   const handleEditSave = async (f, cq) => {
-    await db.updateItem(item.id, { style_no: f.styleNo, name: f.name, season: f.season, factory: f.factory, unit_price: f.unitPrice, patterner: f.patterner, supplier: f.supplier, has_secondary: f.hasSecondary, secondary_name: f.secName, secondary_address: f.secAddress, secondary_phone: f.secPhone, notes: f.notes });
+    await db.updateItem(item.id, { style_no: f.styleNo, name: f.name, season: f.season, factory: f.factory, unit_price: f.unitPrice, patterner: f.patterner, supplier: f.supplier, has_secondary: f.hasSecondary, secondary_name: f.secName, secondary_address: f.secAddress, secondary_phone: f.secPhone, notes: f.notes, delivery_date: f.deliveryDate || null });
     await db.setItemColorSizes(item.id, cq.map(r => ({ color_code: r.colorCode, size_code: r.sizeCode, qty: r.qty })));
     if (f.hasSecondary && !item.has_secondary) {
       await db.upsertStage(item.id, "sec_input", false, currentUser.id);
@@ -298,6 +321,14 @@ function DetailModal({ item, stagesMap, colorSizes, onClose, currentUser, colors
     }
     await db.addLog({ item_id: item.id, user_id: currentUser.id, user_name: currentUser.name, user_role: currentUser.role, message: `${item.style_no} — 情報を編集` });
     setEditing(false);
+    onRefresh();
+  };
+
+  const handleDelete = async () => {
+    if (!confirm(`「${item.style_no} ${item.name}」を削除しますか？\nこの操作は取り消せません。チャット・ファイル・進捗もすべて削除されます。`)) return;
+    await db.addLog({ item_id: null, user_id: currentUser.id, user_name: currentUser.name, user_role: currentUser.role, message: `${item.style_no} ${item.name} を削除` });
+    await supabase.from("items").delete().eq("id", item.id);
+    onClose();
     onRefresh();
   };
 
@@ -319,27 +350,28 @@ function DetailModal({ item, stagesMap, colorSizes, onClose, currentUser, colors
 
   return (<>
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1000]" onClick={onClose}>
-      <div onClick={e => e.stopPropagation()} className="bg-[var(--bg-primary)] rounded-lg p-7 w-[580px] max-w-[94vw] max-h-[92vh] overflow-y-auto border border-[var(--border)]">
+      <div onClick={e => e.stopPropagation()} className="bg-[var(--bg-primary)] rounded-lg p-5 sm:p-7 w-[580px] max-w-[94vw] max-h-[92vh] overflow-y-auto border border-[var(--border)]">
         <div className="flex gap-4 mb-4">
-          <div onClick={() => imgRef.current?.click()} className="w-[120px] h-[120px] rounded-md bg-[var(--bg-tertiary)] flex items-center justify-center overflow-hidden shrink-0 cursor-pointer border-[1.5px] border-dashed border-[var(--border)]" title="画像を変更">
+          <div onClick={() => imgRef.current?.click()} className="w-[90px] h-[90px] sm:w-[120px] sm:h-[120px] rounded-md bg-[var(--bg-tertiary)] flex items-center justify-center overflow-hidden shrink-0 cursor-pointer border-[1.5px] border-dashed border-[var(--border)]" title="画像を変更">
             {item.image_url ? <img src={item.image_url} alt="" className="w-full h-full object-cover" /> : <div className="flex flex-col items-center gap-1"><span className="text-[28px] opacity-30">📷</span><span className="font-mono text-[9px] text-[var(--text-secondary)] opacity-60">画像を追加</span></div>}
             <input ref={imgRef} type="file" accept="image/*" onChange={handleImg} className="hidden" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex justify-between items-start">
               <div>
-                <div className="font-mono text-sm text-[var(--text-secondary)] mb-1 flex items-center gap-2">
+                <div className="font-mono text-sm text-[var(--text-secondary)] mb-1 flex items-center gap-2 flex-wrap">
                   {item.style_no}
                   {isDelivered && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[rgba(42,157,106,0.15)] text-[#2a9d6a] font-semibold">納品完了</span>}
                 </div>
                 <h3 className="text-lg font-medium">{item.name}</h3>
+                <div className="mt-1.5"><DeadlineBadge deliveryDate={item.delivery_date} isDelivered={isDelivered} size="lg" /></div>
               </div>
-              <div className="flex gap-1.5">
+              <div className="flex gap-1.5 shrink-0">
                 <button onClick={() => setEditing(true)} className="bg-transparent border border-[var(--border)] rounded px-2.5 py-1 text-[var(--text-secondary)] text-[11px] cursor-pointer font-mono">✎ 編集</button>
                 <button onClick={onClose} className="bg-transparent border-none text-xl text-[var(--text-secondary)] cursor-pointer">×</button>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2.5 text-xs text-[var(--text-secondary)] font-mono">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1 mt-2.5 text-xs text-[var(--text-secondary)] font-mono">
               {item.factory && <span>工場: {item.factory}</span>}
               {item.unit_price && <span>単価: {item.unit_price}</span>}
               {item.patterner && <span>パタンナー: {item.patterner}</span>}
@@ -379,14 +411,19 @@ function DetailModal({ item, stagesMap, colorSizes, onClose, currentUser, colors
           {files.length > 0 && <div className="flex flex-col gap-1">{files.map(f => (
             <div key={f.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded bg-[var(--bg-secondary)] border border-[var(--border)]">
               <span className="text-sm">{f.file_type?.includes("pdf") ? "📄" : "🖼️"}</span>
-              <button onClick={() => setPreview(f)} className="flex-1 bg-transparent border-none text-[var(--text-primary)] text-xs cursor-pointer text-left p-0">{f.file_name}</button>
-              <span className="text-[10px] text-[var(--text-secondary)] font-mono">{(f.file_size/1024).toFixed(0)}KB</span>
+              <button onClick={() => setPreview(f)} className="flex-1 bg-transparent border-none text-[var(--text-primary)] text-xs cursor-pointer text-left p-0 overflow-hidden text-ellipsis whitespace-nowrap">{f.file_name}</button>
+              <span className="text-[10px] text-[var(--text-secondary)] font-mono shrink-0">{(f.file_size/1024).toFixed(0)}KB</span>
               <button onClick={async () => { await db.deleteFile(f.id, f.file_url); db.getItemFiles(item.id).then(setFiles); }} className="bg-transparent border-none text-[var(--text-secondary)] cursor-pointer text-sm p-0">×</button>
             </div>
           ))}</div>}
         </div>
 
         <ChatPanel itemId={item.id} currentUser={currentUser} />
+
+        {/* Danger zone */}
+        <div className="mt-5 pt-3 border-t border-[var(--border)] flex justify-end">
+          <button onClick={handleDelete} className="px-3 py-1.5 rounded border border-[rgba(196,90,90,0.4)] bg-transparent text-[#c45a5a] text-[11px] cursor-pointer font-mono hover:bg-[rgba(196,90,90,0.08)]">🗑 このアイテムを削除</button>
+        </div>
       </div>
     </div>
 
@@ -402,6 +439,41 @@ function DetailModal({ item, stagesMap, colorSizes, onClose, currentUser, colors
     )}
 
     {editing && <ItemFormModal item={item} onSave={handleEditSave} onClose={() => setEditing(false)} colors={colors} sizes={sizes} title="✎ アイテム編集" />}
+  </>);
+}
+
+// ── Masters Editor ──
+function MastersEditor({ colors: initC, sizes: initS, onSave, onClose }) {
+  const [colors, setColors] = useState([...initC]);
+  const [sizes, setSizes] = useState([...initS]);
+  return (<>
+    <h3 className="mb-4 text-[15px] font-mono">マスター設定</h3>
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+      <div>
+        <label className={`${LS} !mb-2 !text-[11px]`}>色番マスター</label>
+        <div className="flex flex-col gap-1">{colors.map((c, i) => (
+          <div key={i} className="grid grid-cols-[55px_1fr_20px] gap-1 items-center">
+            <input className={`${IS} !p-1 !text-[11px] text-center text-[#d4a843]`} value={c.code} onChange={e => setColors(p => p.map((x,j) => j===i ? {...x, code:e.target.value} : x))} />
+            <input className={`${IS} !p-1 !text-[11px]`} value={c.name} onChange={e => setColors(p => p.map((x,j) => j===i ? {...x, name:e.target.value} : x))} placeholder="色名" />
+            <button onClick={() => setColors(p => p.filter((_,j) => j!==i))} className="bg-transparent border-none text-[var(--text-secondary)] cursor-pointer text-sm p-0">×</button>
+          </div>
+        ))}<button onClick={() => setColors(p => [...p, {code:`C${(p.length+1).toString().padStart(2,"0")}`,name:""}])} className="py-1 border border-dashed border-[var(--border)] rounded-[3px] bg-transparent text-[var(--text-secondary)] text-[11px] cursor-pointer">+</button></div>
+      </div>
+      <div>
+        <label className={`${LS} !mb-2 !text-[11px]`}>サイズ番マスター</label>
+        <div className="flex flex-col gap-1">{sizes.map((s, i) => (
+          <div key={i} className="grid grid-cols-[55px_1fr_20px] gap-1 items-center">
+            <input className={`${IS} !p-1 !text-[11px] text-center text-[#6b8ec4]`} value={s.code} onChange={e => setSizes(p => p.map((x,j) => j===i ? {...x, code:e.target.value} : x))} />
+            <input className={`${IS} !p-1 !text-[11px]`} value={s.name} onChange={e => setSizes(p => p.map((x,j) => j===i ? {...x, name:e.target.value} : x))} placeholder="サイズ名" />
+            <button onClick={() => setSizes(p => p.filter((_,j) => j!==i))} className="bg-transparent border-none text-[var(--text-secondary)] cursor-pointer text-sm p-0">×</button>
+          </div>
+        ))}<button onClick={() => setSizes(p => [...p, {code:`S${(p.length+1).toString().padStart(2,"0")}`,name:""}])} className="py-1 border border-dashed border-[var(--border)] rounded-[3px] bg-transparent text-[var(--text-secondary)] text-[11px] cursor-pointer">+</button></div>
+      </div>
+    </div>
+    <div className="flex gap-2.5 mt-5 justify-end">
+      <button onClick={onClose} className="px-4 py-2 rounded border border-[var(--border)] bg-transparent text-[var(--text-secondary)] text-sm cursor-pointer">キャンセル</button>
+      <button onClick={() => onSave(colors, sizes)} className="px-5 py-2 rounded border-none bg-[var(--text-primary)] text-[var(--bg-primary)] text-sm font-semibold cursor-pointer">保存</button>
+    </div>
   </>);
 }
 
@@ -422,6 +494,8 @@ export default function App() {
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState("all");
   const [sort, setSort] = useState("default");
+  const [search, setSearch] = useState("");
+  const [showDelivered, setShowDelivered] = useState(false);
 
   const loadAll = useCallback(async () => {
     const [it, st, cs, lg, cl, sz, us] = await Promise.all([
@@ -453,7 +527,7 @@ export default function App() {
   const handleLogout = () => { setCU(null); localStorage.removeItem("pt-user"); };
 
   const handleAdd = async (f, cq) => {
-    const created = await db.createItem({ style_no: f.styleNo, name: f.name, season: f.season, factory: f.factory, unit_price: f.unitPrice, patterner: f.patterner, supplier: f.supplier, has_secondary: f.hasSecondary, secondary_name: f.secName, secondary_address: f.secAddress, secondary_phone: f.secPhone, notes: f.notes });
+    const created = await db.createItem({ style_no: f.styleNo, name: f.name, season: f.season, factory: f.factory, unit_price: f.unitPrice, patterner: f.patterner, supplier: f.supplier, has_secondary: f.hasSecondary, secondary_name: f.secName, secondary_address: f.secAddress, secondary_phone: f.secPhone, notes: f.notes, delivery_date: f.deliveryDate || null });
     if (cq.length > 0) await db.setItemColorSizes(created.id, cq.map(r => ({ color_code: r.colorCode, size_code: r.sizeCode, qty: r.qty })));
     const stageKeys = getStageList(f.hasSecondary).map(s => s.key);
     await db.initStages(created.id, stageKeys);
@@ -465,15 +539,40 @@ export default function App() {
   if (!loaded) return <div className="flex items-center justify-center min-h-screen text-[var(--text-secondary)]">読み込み中...</div>;
   if (!currentUser) return <LoginScreen users={users} onLogin={handleLogin} onRegister={handleRegister} />;
 
+  // ── Filtering ──
   const seasons = [...new Set(items.map(i => i.season))].sort();
-  const seasonFiltered = filter === "all" ? items : items.filter(i => i.season === filter);
-  let sorted2 = [...seasonFiltered];
+  let visible = filter === "all" ? items : items.filter(i => i.season === filter);
+
+  // search
+  const q = search.trim().toLowerCase();
+  if (q) visible = visible.filter(i =>
+    (i.style_no||"").toLowerCase().includes(q) ||
+    (i.name||"").toLowerCase().includes(q) ||
+    (i.factory||"").toLowerCase().includes(q) ||
+    (i.secondary_name||"").toLowerCase().includes(q)
+  );
+
+  // delivered filter
+  const deliveredCount = visible.filter(i => (allStages[i.id]||{})["delivered"]).length;
+  if (!showDelivered) visible = visible.filter(i => !(allStages[i.id]||{})["delivered"]);
+
+  // sort
+  let sorted2 = [...visible];
   if (sort === "factory") sorted2.sort((a,b) => (a.factory||"").localeCompare(b.factory||"","ja"));
   else if (sort === "progress_asc") sorted2.sort((a,b) => calcPct(allStages[a.id]||{},a.has_secondary) - calcPct(allStages[b.id]||{},b.has_secondary));
   else if (sort === "progress_desc") sorted2.sort((a,b) => calcPct(allStages[b.id]||{},b.has_secondary) - calcPct(allStages[a.id]||{},a.has_secondary));
+  else if (sort === "deadline") sorted2.sort((a,b) => {
+    if (!a.delivery_date && !b.delivery_date) return 0;
+    if (!a.delivery_date) return 1;
+    if (!b.delivery_date) return -1;
+    return a.delivery_date.localeCompare(b.delivery_date);
+  });
 
-  const totalP = items.length ? Math.round(items.reduce((s,i) => s + calcPct(allStages[i.id]||{}, i.has_secondary), 0) / items.length) : 0;
-  const doneN = items.filter(i => calcPct(allStages[i.id]||{}, i.has_secondary) === 100).length;
+  // stats
+  const activeItems = items.filter(i => !(allStages[i.id]||{})["delivered"]);
+  const totalP = activeItems.length ? Math.round(activeItems.reduce((s,i) => s + calcPct(allStages[i.id]||{}, i.has_secondary), 0) / activeItems.length) : 0;
+  const doneN = items.length - activeItems.length;
+  const urgentN = activeItems.filter(i => { const d = daysUntil(i.delivery_date); return d !== null && d <= 7; }).length;
   const uc = getUserColor(currentUser);
   const sel = items.find(i => i.id === selId);
 
@@ -492,38 +591,44 @@ export default function App() {
     const uniqueColors = [...new Set(colorNames)];
 
     return (
-      <div key={item.id} onClick={() => setSelId(item.id)} className="grid items-center gap-3.5 px-3.5 py-2.5 rounded-md cursor-pointer transition-colors mb-0.5 hover:bg-[var(--hover)]" style={{ gridTemplateColumns: "88px 1fr auto 54px", background: isD ? "rgba(42,157,106,0.04)" : "var(--bg-secondary)", borderLeft: isD ? "3px solid rgba(42,157,106,0.3)" : "3px solid transparent", opacity: isD ? 0.7 : 1 }}>
-        <div className="w-[88px] h-[88px] rounded-md bg-[var(--bg-tertiary)] flex items-center justify-center overflow-hidden shrink-0">
-          {item.image_url ? <img src={item.image_url} alt="" className="w-full h-full object-cover" /> : <div className="flex flex-col items-center gap-1"><span className="text-2xl opacity-30">📷</span><span className="font-mono text-[10px] text-[var(--text-secondary)] opacity-50">No image</span></div>}
+      <div key={item.id} onClick={() => setSelId(item.id)} className="grid items-center gap-3 px-3 py-2.5 rounded-md cursor-pointer transition-colors mb-0.5 hover:bg-[var(--hover)] grid-cols-[64px_1fr_50px] sm:grid-cols-[88px_1fr_54px]" style={{ background: isD ? "rgba(42,157,106,0.04)" : "var(--bg-secondary)", borderLeft: isD ? "3px solid rgba(42,157,106,0.3)" : "3px solid transparent", opacity: isD ? 0.7 : 1 }}>
+        <div className="w-[64px] h-[64px] sm:w-[88px] sm:h-[88px] rounded-md bg-[var(--bg-tertiary)] flex items-center justify-center overflow-hidden shrink-0">
+          {item.image_url ? <img src={item.image_url} alt="" className="w-full h-full object-cover" /> : <div className="flex flex-col items-center gap-1"><span className="text-xl sm:text-2xl opacity-30">📷</span></div>}
         </div>
         <div className="min-w-0">
-          <div className="font-mono text-xs text-[var(--text-secondary)] mb-0.5 flex items-center gap-1.5">
+          <div className="font-mono text-xs text-[var(--text-secondary)] mb-0.5 flex items-center gap-1.5 flex-wrap">
             {item.style_no}
             {isD && <span className="text-[9px] px-1 py-0.5 rounded-sm bg-[rgba(42,157,106,0.15)] text-[#2a9d6a] font-semibold">納品完了</span>}
+            <DeadlineBadge deliveryDate={item.delivery_date} isDelivered={isD} />
           </div>
-          <div className="text-[15px] font-medium whitespace-nowrap overflow-hidden text-ellipsis mb-1">{item.name}</div>
+          <div className="text-[14px] sm:text-[15px] font-medium whitespace-nowrap overflow-hidden text-ellipsis mb-1">{item.name}</div>
           <div className="text-[11px] text-[var(--text-secondary)] flex gap-1.5 flex-wrap">
             {!isFS && item.factory && <span>{item.factory}</span>}
             {item.has_secondary && item.secondary_name && <span className="text-[#6b8ec4]">→ {item.secondary_name}</span>}
-            {uniqueColors.length > 0 && <span>· {uniqueColors.join("/")}</span>}
+            {uniqueColors.length > 0 && <span className="hidden sm:inline">· {uniqueColors.join("/")}</span>}
             {tq > 0 && <span>· {tq}枚</span>}
           </div>
-          <div className="flex gap-0.5 mt-1.5">{st.map((s, idx) => { const isSec = s.group==="sec"; const isDel = s.group==="delivery"; return (
+          <div className="flex gap-0.5 mt-1.5 flex-wrap">{st.map((s, idx) => { const isSec = s.group==="sec"; const isDel = s.group==="delivery"; return (
             <div key={s.key} title={s.label} className="w-3.5 h-3.5 flex items-center justify-center text-[6px] font-mono" style={{ borderRadius: isDel ? 7 : 3, background: sm[s.key] ? (isDel?"#2a9d6a":isSec?"#6b8ec4":"#2a9d6a") : "var(--bg-tertiary)", color: sm[s.key] ? "#fff" : "var(--text-secondary)", marginLeft: ((isSec&&idx>0&&st[idx-1].group!=="sec")||(isDel)) ? 3 : 0 }}>{sm[s.key] ? "✓" : isDel ? "◎" : s.short.slice(0,1)}</div>
           ); })}</div>
         </div>
-        <div></div>
-        <div className="text-right font-mono text-[15px] font-semibold" style={{ color: statusCol(p2) }}>{p2}%</div>
+        <div className="text-right font-mono text-[14px] sm:text-[15px] font-semibold" style={{ color: statusCol(p2) }}>{p2}%</div>
       </div>
     );
   };
 
   return (
-    <div className="p-5 min-h-screen">
-      <div className="max-w-[960px] mx-auto mb-5 flex justify-between items-start flex-wrap gap-3">
+    <div className="p-3 sm:p-5 min-h-screen">
+      {/* Header */}
+      <div className="max-w-[960px] mx-auto mb-4 flex justify-between items-start flex-wrap gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight font-mono">量産進捗</h1>
-          <div className="mt-1.5 flex gap-4 font-mono text-xs text-[var(--text-secondary)]"><span>{items.length}型</span><span>{doneN}完了</span><span>全体 {totalP}%</span></div>
+          <div className="mt-1.5 flex gap-3 sm:gap-4 font-mono text-xs text-[var(--text-secondary)] flex-wrap">
+            <span>{activeItems.length}型 進行中</span>
+            <span>{doneN}完了</span>
+            <span>全体 {totalP}%</span>
+            {urgentN > 0 && <span className="text-[#e06c6c] font-semibold">⚠ 納期間近 {urgentN}件</span>}
+          </div>
         </div>
         <div className="flex gap-2 items-center flex-wrap">
           <div className="flex items-center gap-1.5 px-3 py-1 rounded" style={{ border: `1.5px solid ${uc}`, background: `${uc}10` }}>
@@ -532,23 +637,39 @@ export default function App() {
             <button onClick={handleLogout} className="bg-transparent border-none text-[var(--text-secondary)] cursor-pointer text-sm pl-1">×</button>
           </div>
           <button onClick={() => setShowMasters(true)} className="px-3 py-1.5 rounded border-[1.5px] border-[var(--border)] bg-transparent text-[var(--text-secondary)] text-xs font-mono cursor-pointer">⚙</button>
-          <button onClick={() => setShowLog(!showLog)} className="px-3 py-1.5 rounded border-[1.5px] border-[var(--border)] bg-transparent text-[var(--text-secondary)] text-xs font-mono cursor-pointer">履歴{logs.length > 0 && ` (${logs.length})`}</button>
+          <button onClick={() => setShowLog(!showLog)} className="px-3 py-1.5 rounded border-[1.5px] border-[var(--border)] bg-transparent text-[var(--text-secondary)] text-xs font-mono cursor-pointer">履歴</button>
           <button onClick={() => setShowAdd(true)} className="px-3.5 py-1.5 rounded border-none bg-[var(--text-primary)] text-[var(--bg-primary)] text-xs font-semibold cursor-pointer font-mono">+ 追加</button>
         </div>
       </div>
 
+      {/* Search */}
+      <div className="max-w-[960px] mx-auto mb-3">
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] text-sm">🔍</span>
+          <input className={`${IS} !pl-9`} value={search} onChange={e => setSearch(e.target.value)} placeholder="品番・品名・工場・加工先で検索..." />
+          {search && <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 bg-transparent border-none text-[var(--text-secondary)] cursor-pointer">×</button>}
+        </div>
+      </div>
+
+      {/* Filters & Sort */}
       <div className="max-w-[960px] mx-auto mb-3.5 flex justify-between items-center flex-wrap gap-2.5">
-        <div className="flex gap-1.5">{["all", ...seasons].map(s => (
-          <button key={s} onClick={() => setFilter(s)} className="px-2.5 py-1 rounded-[3px] border border-[var(--border)] text-[11px] font-mono cursor-pointer" style={{ background: filter===s ? "var(--bg-tertiary)" : "transparent", color: filter===s ? "var(--text-primary)" : "var(--text-secondary)" }}>{s === "all" ? "ALL" : s}</button>
-        ))}</div>
-        <div className="flex gap-1.5 items-center">
+        <div className="flex gap-1.5 items-center flex-wrap">
+          {seasons.length > 1 && ["all", ...seasons].map(s => (
+            <button key={s} onClick={() => setFilter(s)} className="px-2.5 py-1 rounded-[3px] border border-[var(--border)] text-[11px] font-mono cursor-pointer" style={{ background: filter===s ? "var(--bg-tertiary)" : "transparent", color: filter===s ? "var(--text-primary)" : "var(--text-secondary)" }}>{s === "all" ? "ALL" : s}</button>
+          ))}
+          <button onClick={() => setShowDelivered(!showDelivered)} className="px-2.5 py-1 rounded-[3px] border text-[11px] font-mono cursor-pointer" style={{ borderColor: showDelivered ? "#2a9d6a" : "var(--border)", background: showDelivered ? "rgba(42,157,106,0.08)" : "transparent", color: showDelivered ? "#2a9d6a" : "var(--text-secondary)" }}>
+            {showDelivered ? "✓" : ""}納品済を表示{deliveredCount > 0 && ` (${deliveredCount})`}
+          </button>
+        </div>
+        <div className="flex gap-1.5 items-center flex-wrap">
           <span className="text-[10px] font-mono text-[var(--text-secondary)] uppercase tracking-wider mr-0.5">並替</span>
-          {[{key:"default",label:"デフォルト"},{key:"factory",label:"工場別"},{key:"progress_asc",label:"進捗 ↑"},{key:"progress_desc",label:"進捗 ↓"}].map(o => (
+          {[{key:"default",label:"登録順"},{key:"deadline",label:"納期順"},{key:"factory",label:"工場別"},{key:"progress_asc",label:"進捗↑"},{key:"progress_desc",label:"進捗↓"}].map(o => (
             <button key={o.key} onClick={() => setSort(o.key)} className="px-2 py-0.5 rounded-[3px] text-[11px] font-mono cursor-pointer" style={{ border: `1px solid ${sort===o.key ? "var(--text-secondary)" : "var(--border)"}`, background: sort===o.key ? "var(--bg-tertiary)" : "transparent", color: sort===o.key ? "var(--text-primary)" : "var(--text-secondary)" }}>{o.label}</button>
           ))}
         </div>
       </div>
 
+      {/* List */}
       <div className="max-w-[960px] mx-auto flex flex-col gap-0.5">
         {isFS ? fGroups.map(([factory, fitems]) => (
           <div key={factory}>
@@ -556,9 +677,10 @@ export default function App() {
             {fitems.map(renderItem)}
           </div>
         )) : sorted2.map(renderItem)}
-        {sorted2.length === 0 && <div className="text-center py-10 text-[var(--text-secondary)] text-sm">アイテムがありません</div>}
+        {sorted2.length === 0 && <div className="text-center py-10 text-[var(--text-secondary)] text-sm">{q ? `「${search}」に一致するアイテムがありません` : "アイテムがありません"}</div>}
       </div>
 
+      {/* Log Panel */}
       {showLog && (
         <div className="fixed right-0 top-0 bottom-0 w-[360px] max-w-[85vw] bg-[var(--bg-primary)] border-l border-[var(--border)] p-5 overflow-y-auto z-[999] shadow-[-4px_0_20px_rgba(0,0,0,0.3)]">
           <div className="flex justify-between items-center mb-4"><h3 className="text-sm font-mono">更新履歴</h3><button onClick={() => setShowLog(false)} className="bg-transparent border-none text-[var(--text-secondary)] text-lg cursor-pointer">×</button></div>
@@ -585,38 +707,4 @@ export default function App() {
       {sel && <DetailModal item={sel} stagesMap={allStages[sel.id]||{}} colorSizes={allCS[sel.id]||[]} onClose={() => setSelId(null)} currentUser={currentUser} colors={colors} sizes={sizes} onRefresh={loadAll} />}
     </div>
   );
-}
-
-function MastersEditor({ colors: initC, sizes: initS, onSave, onClose }) {
-  const [colors, setColors] = useState([...initC]);
-  const [sizes, setSizes] = useState([...initS]);
-  return (<>
-    <h3 className="mb-4 text-[15px] font-mono">マスター設定</h3>
-    <div className="grid grid-cols-2 gap-5">
-      <div>
-        <label className={`${LS} !mb-2 !text-[11px]`}>色番マスター</label>
-        <div className="flex flex-col gap-1">{colors.map((c, i) => (
-          <div key={i} className="grid grid-cols-[55px_1fr_20px] gap-1 items-center">
-            <input className={`${IS} !p-1 !text-[11px] text-center text-[#d4a843]`} value={c.code} onChange={e => setColors(p => p.map((x,j) => j===i ? {...x, code:e.target.value} : x))} />
-            <input className={`${IS} !p-1 !text-[11px]`} value={c.name} onChange={e => setColors(p => p.map((x,j) => j===i ? {...x, name:e.target.value} : x))} placeholder="色名" />
-            <button onClick={() => setColors(p => p.filter((_,j) => j!==i))} className="bg-transparent border-none text-[var(--text-secondary)] cursor-pointer text-sm p-0">×</button>
-          </div>
-        ))}<button onClick={() => setColors(p => [...p, {code:`C${(p.length+1).toString().padStart(2,"0")}`,name:""}])} className="py-1 border border-dashed border-[var(--border)] rounded-[3px] bg-transparent text-[var(--text-secondary)] text-[11px] cursor-pointer">+</button></div>
-      </div>
-      <div>
-        <label className={`${LS} !mb-2 !text-[11px]`}>サイズ番マスター</label>
-        <div className="flex flex-col gap-1">{sizes.map((s, i) => (
-          <div key={i} className="grid grid-cols-[55px_1fr_20px] gap-1 items-center">
-            <input className={`${IS} !p-1 !text-[11px] text-center text-[#6b8ec4]`} value={s.code} onChange={e => setSizes(p => p.map((x,j) => j===i ? {...x, code:e.target.value} : x))} />
-            <input className={`${IS} !p-1 !text-[11px]`} value={s.name} onChange={e => setSizes(p => p.map((x,j) => j===i ? {...x, name:e.target.value} : x))} placeholder="サイズ名" />
-            <button onClick={() => setSizes(p => p.filter((_,j) => j!==i))} className="bg-transparent border-none text-[var(--text-secondary)] cursor-pointer text-sm p-0">×</button>
-          </div>
-        ))}<button onClick={() => setSizes(p => [...p, {code:`S${(p.length+1).toString().padStart(2,"0")}`,name:""}])} className="py-1 border border-dashed border-[var(--border)] rounded-[3px] bg-transparent text-[var(--text-secondary)] text-[11px] cursor-pointer">+</button></div>
-      </div>
-    </div>
-    <div className="flex gap-2.5 mt-5 justify-end">
-      <button onClick={onClose} className="px-4 py-2 rounded border border-[var(--border)] bg-transparent text-[var(--text-secondary)] text-sm cursor-pointer">キャンセル</button>
-      <button onClick={() => onSave(colors, sizes)} className="px-5 py-2 rounded border-none bg-[var(--text-primary)] text-[var(--bg-primary)] text-sm font-semibold cursor-pointer">保存</button>
-    </div>
-  </>);
 }
