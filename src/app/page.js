@@ -21,6 +21,25 @@ const DELIVERY = { key:"delivered",label:"納品完了",short:"納完",group:"de
 const ROLES = ["デザイナー","生産管理","パタンナー","MD","その他"];
 const ROLE_COLORS = {"デザイナー":"#7a6ad8","生産管理":"#c47a3a","パタンナー":"#4a9d8a","MD":"#c45a7a","その他":"#8a8a8a"};
 
+const FLAG_COLORS = [
+  { key: "red", c: "#e0564f", label: "赤" },
+  { key: "orange", c: "#e8923a", label: "オレンジ" },
+  { key: "yellow", c: "#e3c33f", label: "黄" },
+  { key: "green", c: "#48b865", label: "緑" },
+  { key: "blue", c: "#4a90d9", label: "青" },
+  { key: "purple", c: "#a06ad8", label: "紫" },
+  { key: "gray", c: "#8a8a8a", label: "グレー" },
+];
+function flagColorOf(key) { return FLAG_COLORS.find(f => f.key === key)?.c || null; }
+
+function FlagIcon({ color, size = 13 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" style={{ display: "inline-block", flexShrink: 0 }}>
+      <path d="M3 1.5 L3 15 M3 2 L12.5 2 L10.5 5 L12.5 8 L3 8" fill={color} stroke={color} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function getStageList(hasSec) {
   const s = [...BASE_STAGES];
   if (hasSec) s.push(...SEC_STAGES);
@@ -594,6 +613,14 @@ function DetailModal({ item, stagesMap, colorSizes, onClose, currentUser, colors
     e.target.value = "";
   };
 
+  const handleFlag = async (key) => {
+    const newFlag = item.flag_color === key ? null : key;
+    await db.updateItem(item.id, { flag_color: newFlag });
+    const f = FLAG_COLORS.find(x => x.key === key);
+    await db.addLog({ item_id: item.id, user_id: currentUser.id, user_name: currentUser.name, user_role: currentUser.role, message: `${item.style_no} — 旗を${newFlag ? `${f.label}に設定` : "外す"}` });
+    onRefresh();
+  };
+
   const groups = { prep: stageList.filter(s=>s.group==="prep"), order: stageList.filter(s=>s.group==="order"), prod: stageList.filter(s=>s.group==="prod"), sec: stageList.filter(s=>s.group==="sec"), delivery: stageList.filter(s=>s.group==="delivery") };
 
   return (<>
@@ -608,11 +635,24 @@ function DetailModal({ item, stagesMap, colorSizes, onClose, currentUser, colors
             <div className="flex justify-between items-start">
               <div>
                 <div className="font-mono text-sm text-[var(--text-secondary)] mb-1 flex items-center gap-2 flex-wrap">
+                  {item.flag_color && <FlagIcon color={flagColorOf(item.flag_color)} size={14} />}
                   {item.style_no}
                   {isDelivered && <span className="text-[10px] px-1.5 py-0.5 rounded bg-[rgba(42,157,106,0.15)] text-[#2a9d6a] font-semibold">納品完了</span>}
                 </div>
                 <h3 className="text-lg font-medium">{item.name}</h3>
-                <div className="mt-1.5"><DeadlineBadge deliveryDate={item.delivery_date} isDelivered={isDelivered} size="lg" /></div>
+                <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                  <DeadlineBadge deliveryDate={item.delivery_date} isDelivered={isDelivered} size="lg" />
+                  {/* Flag picker */}
+                  <div className="flex items-center gap-1 px-1.5 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border)]">
+                    <span className="text-[9px] font-mono text-[var(--text-secondary)] uppercase tracking-wider mr-0.5">旗</span>
+                    {FLAG_COLORS.map(f => (
+                      <button key={f.key} onClick={() => handleFlag(f.key)} title={f.label} className="w-[18px] h-[18px] rounded-full flex items-center justify-center cursor-pointer border-none transition-transform hover:scale-110" style={{ background: item.flag_color === f.key ? `${f.c}30` : "transparent" }}>
+                        <FlagIcon color={item.flag_color === f.key ? f.c : `${f.c}70`} size={12} />
+                      </button>
+                    ))}
+                    {item.flag_color && <button onClick={() => handleFlag(item.flag_color)} title="旗を外す" className="w-[18px] h-[18px] rounded-full flex items-center justify-center cursor-pointer border-none bg-transparent text-[var(--text-secondary)] text-[11px] hover:scale-110">×</button>}
+                  </div>
+                </div>
               </div>
               <div className="flex gap-1.5 shrink-0">
                 <button onClick={() => setEditing(true)} className="bg-transparent border border-[var(--border)] rounded px-2.5 py-1 text-[var(--text-secondary)] text-[11px] cursor-pointer font-mono">✎ 編集</button>
@@ -780,6 +820,7 @@ export default function App() {
   const [sort, setSort] = useState("default");
   const [search, setSearch] = useState("");
   const [showDelivered, setShowDelivered] = useState(false);
+  const [flagFilter, setFlagFilter] = useState(null);
 
   const loadAll = useCallback(async () => {
     const [it, st, cs, lg, cl, sz, us] = await Promise.all([
@@ -857,6 +898,10 @@ export default function App() {
   const deliveredCount = visible.filter(i => (allStages[i.id]||{})["delivered"]).length;
   if (!showDelivered) visible = visible.filter(i => !(allStages[i.id]||{})["delivered"]);
 
+  // flag filter
+  const flagsInUse = [...new Set(items.map(i => i.flag_color).filter(Boolean))];
+  if (flagFilter) visible = visible.filter(i => i.flag_color === flagFilter);
+
   // sort
   let sorted2 = [...visible];
   if (sort === "factory") sorted2.sort((a,b) => (a.factory||"").localeCompare(b.factory||"","ja"));
@@ -898,6 +943,7 @@ export default function App() {
         </div>
         <div className="min-w-0">
           <div className="font-mono text-xs text-[var(--text-secondary)] mb-0.5 flex items-center gap-1.5 flex-wrap">
+            {item.flag_color && <FlagIcon color={flagColorOf(item.flag_color)} />}
             {item.style_no}
             {isD && <span className="text-[9px] px-1 py-0.5 rounded-sm bg-[rgba(42,157,106,0.15)] text-[#2a9d6a] font-semibold">納品完了</span>}
             <DeadlineBadge deliveryDate={item.delivery_date} isDelivered={isD} />
@@ -976,6 +1022,20 @@ export default function App() {
           <button onClick={() => setShowDelivered(!showDelivered)} className="px-2.5 py-1 rounded-[3px] border text-[11px] font-mono cursor-pointer" style={{ borderColor: showDelivered ? "#2a9d6a" : "var(--border)", background: showDelivered ? "rgba(42,157,106,0.08)" : "transparent", color: showDelivered ? "#2a9d6a" : "var(--text-secondary)" }}>
             {showDelivered ? "✓" : ""}納品済を表示{deliveredCount > 0 && ` (${deliveredCount})`}
           </button>
+          {flagsInUse.length > 0 && (
+            <div className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-[3px] border border-[var(--border)]">
+              {flagsInUse.map(fk => {
+                const f = FLAG_COLORS.find(x => x.key === fk);
+                if (!f) return null;
+                return (
+                  <button key={fk} onClick={() => setFlagFilter(flagFilter === fk ? null : fk)} title={`${f.label}の旗で絞り込み`} className="w-[20px] h-[20px] rounded flex items-center justify-center cursor-pointer border-none transition-transform hover:scale-110" style={{ background: flagFilter === fk ? `${f.c}28` : "transparent" }}>
+                    <FlagIcon color={flagFilter === fk ? f.c : `${f.c}80`} size={12} />
+                  </button>
+                );
+              })}
+              {flagFilter && <button onClick={() => setFlagFilter(null)} className="bg-transparent border-none text-[var(--text-secondary)] cursor-pointer text-[11px] px-0.5">×</button>}
+            </div>
+          )}
         </div>
         <div className="flex gap-1.5 items-center flex-wrap">
           <span className="text-[10px] font-mono text-[var(--text-secondary)] uppercase tracking-wider mr-0.5">並替</span>
