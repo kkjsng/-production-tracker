@@ -51,6 +51,254 @@ function totalQty(csq) { return (csq||[]).reduce((s,r) => s + (r.qty||0), 0); }
 const IS = "w-full px-2.5 py-1.5 rounded border-[1.5px] border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-primary)] text-sm outline-none";
 const LS = "block text-[10px] text-[var(--text-secondary)] mb-0.5 font-mono uppercase tracking-wider";
 
+// ── CSV utilities ──
+const CSV_HEADERS = ["品番","品名","シーズン","納期(YYYY-MM-DD)","工場","工場単価","パタンナー","仕入先","二次加工先名","二次加工先住所","二次加工先電話","メモ","色番","サイズ番","数量"];
+
+function downloadCSVTemplate() {
+  const example1 = ["TN-26AW-01","Sample Knit Vest","26AW","2026-08-31","丸和ニット","¥4,200","山田","糸商A","","","","後染めあり","C01","S03","20"];
+  const example2 = ["TN-26AW-01","Sample Knit Vest","26AW","2026-08-31","丸和ニット","¥4,200","山田","糸商A","","","","後染めあり","C01","S04","10"];
+  const example3 = ["TN-26AW-02","Sample Tote","26AW","2026-09-15","福祉施設A","¥1,800","","帆布問屋B","プリント工房B","埼玉県川口市XX","048-XXX-XXXX","シルク印刷","C04","S06","30"];
+  const csv = [CSV_HEADERS, example1, example2, example3].map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(",")).join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "items_template.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function readCSVFile(file) {
+  const buf = await file.arrayBuffer();
+  let text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
+  if (text.includes("\uFFFD")) {
+    try { text = new TextDecoder("shift-jis").decode(buf); } catch (e) {}
+  }
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+  return text;
+}
+
+function parseCSV(text) {
+  const rows = [];
+  let cur = [], field = "", inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i+1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === ",") { cur.push(field); field = ""; }
+      else if (ch === "\n") { cur.push(field); rows.push(cur); cur = []; field = ""; }
+      else if (ch === "\r") { /* skip */ }
+      else field += ch;
+    }
+  }
+  if (field !== "" || cur.length) { cur.push(field); rows.push(cur); }
+  return rows.filter(r => r.some(c => (c||"").trim() !== ""));
+}
+
+function normDate(s) {
+  if (!s) return null;
+  const m = String(s).trim().replace(/\//g, "-").match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return null;
+  return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
+}
+
+function groupCSVRows(rows, existingStyleNos, colors, sizes) {
+  // rows: data rows (header removed). Column order = CSV_HEADERS
+  const grouped = new Map();
+  const warnings = [];
+  rows.forEach((r, idx) => {
+    const line = idx + 2; // +2 because header is line 1
+    const [styleNo, name, season, delivery, factory, unitPrice, patterner, supplier, secName, secAddr, secPhone, notes, colorCode, sizeCode, qty] = r.map(c => (c||"").trim());
+    if (!styleNo) { warnings.push(`${line}行目: 品番が空のためスキップ`); return; }
+    if (!grouped.has(styleNo)) {
+      if (!name) warnings.push(`${line}行目: ${styleNo} の品名が空です`);
+      const dd = normDate(delivery);
+      if (delivery && !dd) warnings.push(`${line}行目: 納期「${delivery}」の形式が不正です (YYYY-MM-DD)`);
+      grouped.set(styleNo, {
+        styleNo, name: name || styleNo, season: season || "", deliveryDate: dd,
+        factory: factory || "", unitPrice: unitPrice || "", patterner: patterner || "", supplier: supplier || "",
+        secName: secName || "", secAddress: secAddr || "", secPhone: secPhone || "",
+        hasSecondary: !!(secName && secName.trim()),
+        notes: notes || "", csq: [],
+        duplicate: existingStyleNos.has(styleNo),
+      });
+    }
+    const g = grouped.get(styleNo);
+    if (colorCode || sizeCode) {
+      if (colorCode && !findMaster(colorCode, colors)) warnings.push(`${line}行目: 色番「${colorCode}」はマスター未登録です`);
+      if (sizeCode && !findMaster(sizeCode, sizes)) warnings.push(`${line}行目: サイズ番「${sizeCode}」はマスター未登録です`);
+      g.csq.push({ colorCode: colorCode.toUpperCase(), sizeCode: sizeCode.toUpperCase(), qty: Number(qty) || 0 });
+    }
+  });
+  return { grouped: [...grouped.values()], warnings };
+}
+
+// ── Masters CSV utilities ──
+const MASTER_CSV_HEADERS = ["種別(色/サイズ)","コード","名前"];
+
+function downloadMastersTemplate() {
+  const rows = [MASTER_CSV_HEADERS, ["色","C01","White"], ["色","C02","Ecru"], ["サイズ","S01","XS"], ["サイズ","S02","S"]];
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(",")).join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "masters_template.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportMastersCSV(colors, sizes) {
+  const rows = [MASTER_CSV_HEADERS];
+  colors.forEach(c => rows.push(["色", c.code, c.name]));
+  sizes.forEach(s => rows.push(["サイズ", s.code, s.name]));
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(",")).join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "masters.csv"; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function mergeMastersFromCSV(rows, colors, sizes) {
+  // rows: data rows (header removed). [種別, コード, 名前]
+  const newColors = [...colors];
+  const newSizes = [...sizes];
+  const warnings = [];
+  let added = 0, updated = 0;
+  rows.forEach((r, idx) => {
+    const line = idx + 2;
+    const [kind, code, name] = r.map(c => (c||"").trim());
+    if (!kind || !code) { warnings.push(`${line}行目: 種別またはコードが空のためスキップ`); return; }
+    const isColor = kind.includes("色");
+    const isSize = kind.includes("サイズ");
+    if (!isColor && !isSize) { warnings.push(`${line}行目: 種別「${kind}」は「色」か「サイズ」にしてください`); return; }
+    const list = isColor ? newColors : newSizes;
+    const existing = list.find(m => m.code.toLowerCase() === code.toLowerCase());
+    if (existing) { if (existing.name !== name) { existing.name = name; updated++; } }
+    else { list.push({ code: code.toUpperCase(), name }); added++; }
+  });
+  return { newColors, newSizes, warnings, added, updated };
+}
+
+function CSVImportModal({ onClose, onImported, existingItems, colors, sizes, currentUser }) {
+  const [parsed, setParsed] = useState(null); // { grouped, warnings }
+  const [importing, setImporting] = useState(false);
+  const [done, setDone] = useState(null); // { ok, skipped }
+  const fileRef = useRef(null);
+
+  const handleFile = async (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    try {
+      const text = await readCSVFile(f);
+      const rows = parseCSV(text);
+      if (rows.length < 2) { alert("データ行がありません。雛形を確認してください。"); return; }
+      const dataRows = rows.slice(1); // skip header
+      const existingStyleNos = new Set(existingItems.map(i => i.style_no));
+      setParsed(groupCSVRows(dataRows, existingStyleNos, colors, sizes));
+      setDone(null);
+    } catch (err) {
+      alert("CSVの読み込みに失敗しました: " + err.message);
+    }
+    e.target.value = "";
+  };
+
+  const runImport = async () => {
+    if (!parsed) return;
+    setImporting(true);
+    let ok = 0, skipped = 0;
+    for (const g of parsed.grouped) {
+      if (g.duplicate) { skipped++; continue; }
+      const created = await db.createItem({
+        style_no: g.styleNo, name: g.name, season: g.season, factory: g.factory,
+        unit_price: g.unitPrice, patterner: g.patterner, supplier: g.supplier,
+        has_secondary: g.hasSecondary, secondary_name: g.secName,
+        secondary_address: g.secAddress, secondary_phone: g.secPhone,
+        notes: g.notes, delivery_date: g.deliveryDate,
+      });
+      if (g.csq.length > 0) {
+        await db.setItemColorSizes(created.id, g.csq.map(r => ({ color_code: r.colorCode, size_code: r.sizeCode, qty: r.qty })));
+      }
+      const stageKeys = getStageList(g.hasSecondary).map(s => s.key);
+      await db.initStages(created.id, stageKeys);
+      ok++;
+    }
+    await db.addLog({ item_id: null, user_id: currentUser.id, user_name: currentUser.name, user_role: currentUser.role, message: `CSV取込: ${ok}型を追加${skipped > 0 ? ` (${skipped}型は品番重複でスキップ)` : ""}` });
+    setImporting(false);
+    setDone({ ok, skipped });
+    onImported();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1001]" onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} className="bg-[var(--bg-primary)] rounded-lg p-6 sm:p-7 w-[560px] max-w-[94vw] max-h-[90vh] overflow-y-auto border border-[var(--border)]">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-[15px] font-mono">📥 CSV一括取込</h3>
+          <button onClick={onClose} className="bg-transparent border-none text-xl text-[var(--text-secondary)] cursor-pointer">×</button>
+        </div>
+
+        {/* Step 1: template + file select */}
+        <div className="flex flex-col gap-3 mb-4">
+          <div className="p-3 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)]">
+            <div className="text-xs text-[var(--text-secondary)] mb-2 leading-relaxed">
+              ① まず雛形をダウンロードしてExcelで開き、商品を入力してCSVのまま保存してください。<br/>
+              同じ品番の行は、カラー・サイズ展開として1つのアイテムにまとまります。
+            </div>
+            <button onClick={downloadCSVTemplate} className="px-3 py-1.5 rounded border border-[var(--border)] bg-transparent text-[var(--text-primary)] text-xs cursor-pointer font-mono hover:bg-[var(--hover)]">⬇ 雛形CSVをダウンロード</button>
+          </div>
+          <div className="p-3 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)]">
+            <div className="text-xs text-[var(--text-secondary)] mb-2">② 入力済みのCSVファイルを選択:</div>
+            <button onClick={() => fileRef.current?.click()} className="px-3 py-1.5 rounded border border-dashed border-[var(--border)] bg-transparent text-[var(--text-primary)] text-xs cursor-pointer font-mono hover:bg-[var(--hover)]">📄 CSVファイルを選択</button>
+            <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} className="hidden" />
+          </div>
+        </div>
+
+        {/* Preview */}
+        {parsed && !done && (
+          <div className="mb-4">
+            <div className="text-xs font-mono text-[var(--text-secondary)] uppercase tracking-wider mb-2">プレビュー — {parsed.grouped.length}型</div>
+            <div className="border border-[var(--border)] rounded overflow-hidden max-h-[240px] overflow-y-auto">
+              {parsed.grouped.map((g, i) => (
+                <div key={i} className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-light)] text-xs" style={{ opacity: g.duplicate ? 0.5 : 1 }}>
+                  <span className="font-mono text-[var(--text-secondary)] shrink-0">{g.styleNo}</span>
+                  <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{g.name}</span>
+                  {g.deliveryDate && <span className="font-mono text-[10px] text-[var(--text-secondary)] shrink-0">納期 {g.deliveryDate}</span>}
+                  <span className="font-mono text-[10px] text-[var(--text-secondary)] shrink-0">{g.csq.length}行 / {g.csq.reduce((s,r)=>s+r.qty,0)}枚</span>
+                  {g.hasSecondary && <span className="text-[10px] text-[#6b8ec4] shrink-0">二次加工</span>}
+                  {g.duplicate && <span className="text-[10px] text-[#e06c6c] shrink-0 font-semibold">品番重複→スキップ</span>}
+                </div>
+              ))}
+            </div>
+            {parsed.warnings.length > 0 && (
+              <div className="mt-2 p-2.5 rounded border border-[rgba(212,168,67,0.4)] bg-[rgba(212,168,67,0.08)] max-h-[120px] overflow-y-auto">
+                <div className="text-[10px] font-mono text-[#d4a843] uppercase tracking-wider mb-1">⚠ 警告 {parsed.warnings.length}件（取込は可能）</div>
+                {parsed.warnings.map((w, i) => <div key={i} className="text-[11px] text-[#d4a843] leading-relaxed">{w}</div>)}
+              </div>
+            )}
+            <div className="flex justify-end mt-3">
+              <button onClick={runImport} disabled={importing} className="px-5 py-2 rounded border-none bg-[var(--text-primary)] text-[var(--bg-primary)] text-sm font-semibold cursor-pointer disabled:opacity-50">
+                {importing ? "取込中..." : `${parsed.grouped.filter(g=>!g.duplicate).length}型を取り込む`}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Done */}
+        {done && (
+          <div className="p-4 rounded-md border border-[rgba(42,157,106,0.4)] bg-[rgba(42,157,106,0.08)] text-center">
+            <div className="text-sm text-[#2a9d6a] font-semibold mb-1">✓ 取込完了</div>
+            <div className="text-xs text-[var(--text-secondary)]">{done.ok}型を追加しました{done.skipped > 0 && `（${done.skipped}型は品番重複でスキップ）`}</div>
+            <button onClick={onClose} className="mt-3 px-4 py-1.5 rounded border border-[var(--border)] bg-transparent text-[var(--text-secondary)] text-xs cursor-pointer">閉じる</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 // ── Deadline Badge ──
 function DeadlineBadge({ deliveryDate, isDelivered, size = "sm" }) {
   if (!deliveryDate) return null;
@@ -67,7 +315,7 @@ function DeadlineBadge({ deliveryDate, isDelivered, size = "sm" }) {
 }
 
 // ── Login Screen ──
-function LoginScreen({ users, onLogin, onRegister }) {
+function LoginScreen({ users, onLogin, onRegister, appTitle }) {
   const [mode, setMode] = useState(users.length > 0 ? "select" : "register");
   const [name, setName] = useState("");
   const [role, setRole] = useState(ROLES[0]);
@@ -75,7 +323,7 @@ function LoginScreen({ users, onLogin, onRegister }) {
   if (mode === "register") return (
     <div className="flex items-center justify-center min-h-screen p-5">
       <div className="w-[360px] max-w-[90vw]">
-        <h1 className="font-mono text-[22px] mb-1.5 tracking-tight">量産進捗</h1>
+        <h1 className="font-mono text-[22px] mb-1.5 tracking-tight">{appTitle}</h1>
         <p className="text-sm text-[var(--text-secondary)] mb-7">ユーザー登録</p>
         <div className="flex flex-col gap-3.5">
           <div><label className={LS}>名前 *</label><input className={IS} value={name} onChange={e=>setName(e.target.value)} placeholder="例: 田中" /></div>
@@ -96,7 +344,7 @@ function LoginScreen({ users, onLogin, onRegister }) {
   return (
     <div className="flex items-center justify-center min-h-screen p-5">
       <div className="w-[360px] max-w-[90vw]">
-        <h1 className="font-mono text-[22px] mb-1.5 tracking-tight">量産進捗</h1>
+        <h1 className="font-mono text-[22px] mb-1.5 tracking-tight">{appTitle}</h1>
         <p className="text-sm text-[var(--text-secondary)] mb-7">ログイン</p>
         <div className="flex flex-col gap-1.5">
           {users.map(u => (
@@ -446,8 +694,40 @@ function DetailModal({ item, stagesMap, colorSizes, onClose, currentUser, colors
 function MastersEditor({ colors: initC, sizes: initS, onSave, onClose }) {
   const [colors, setColors] = useState([...initC]);
   const [sizes, setSizes] = useState([...initS]);
+  const [csvMsg, setCsvMsg] = useState("");
+  const csvRef = useRef(null);
+
+  const handleMastersCSV = async (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    try {
+      const text = await readCSVFile(f);
+      const rows = parseCSV(text);
+      if (rows.length < 2) { alert("データ行がありません。雛形を確認してください。"); return; }
+      const { newColors, newSizes, warnings, added, updated } = mergeMastersFromCSV(rows.slice(1), colors, sizes);
+      setColors(newColors);
+      setSizes(newSizes);
+      let msg = `✓ ${added}件追加・${updated}件更新（保存ボタンで確定）`;
+      if (warnings.length > 0) msg += ` / ⚠ ${warnings.length}件スキップ: ${warnings[0]}${warnings.length > 1 ? " 他" : ""}`;
+      setCsvMsg(msg);
+    } catch (err) {
+      alert("CSVの読み込みに失敗しました: " + err.message);
+    }
+    e.target.value = "";
+  };
+
   return (<>
-    <h3 className="mb-4 text-[15px] font-mono">マスター設定</h3>
+    <h3 className="mb-3 text-[15px] font-mono">マスター設定</h3>
+
+    {/* CSV row */}
+    <div className="flex gap-1.5 flex-wrap mb-1.5">
+      <button onClick={downloadMastersTemplate} className="px-2.5 py-1 rounded border border-[var(--border)] bg-transparent text-[var(--text-secondary)] text-[11px] cursor-pointer font-mono hover:bg-[var(--hover)]">⬇ 雛形CSV</button>
+      <button onClick={() => exportMastersCSV(colors, sizes)} className="px-2.5 py-1 rounded border border-[var(--border)] bg-transparent text-[var(--text-secondary)] text-[11px] cursor-pointer font-mono hover:bg-[var(--hover)]">⬇ 現在のマスターを書出</button>
+      <button onClick={() => csvRef.current?.click()} className="px-2.5 py-1 rounded border border-dashed border-[var(--border)] bg-transparent text-[var(--text-primary)] text-[11px] cursor-pointer font-mono hover:bg-[var(--hover)]">📥 CSV読込</button>
+      <input ref={csvRef} type="file" accept=".csv,text/csv" onChange={handleMastersCSV} className="hidden" />
+    </div>
+    {csvMsg && <div className="text-[11px] text-[#2a9d6a] mb-2 font-mono">{csvMsg}</div>}
+    <div className="text-[10px] text-[var(--text-secondary)] mb-4 leading-relaxed">CSVは「種別(色/サイズ), コード, 名前」の3列。同じコードは名前が上書き、新しいコードは追加されます。</div>
+
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
       <div>
         <label className={`${LS} !mb-2 !text-[11px]`}>色番マスター</label>
@@ -491,6 +771,10 @@ export default function App() {
   const [showAdd, setShowAdd] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [showMasters, setShowMasters] = useState(false);
+  const [showCSV, setShowCSV] = useState(false);
+  const [appTitle, setAppTitle] = useState("量産進捗");
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [filter, setFilter] = useState("all");
   const [sort, setSort] = useState("default");
@@ -506,6 +790,10 @@ export default function App() {
     const sm = {}; st.forEach(s => { if (!sm[s.item_id]) sm[s.item_id] = {}; sm[s.item_id][s.stage_key] = s.checked; }); setAllStages(sm);
     const cm = {}; cs.forEach(c => { if (!cm[c.item_id]) cm[c.item_id] = []; cm[c.item_id].push(c); }); setAllCS(cm);
     setLogs(lg); setColors(cl); setSizes(sz); setUsers(us);
+    try {
+      const { data: titleRow } = await supabase.from("app_settings").select("value").eq("key", "app_title").maybeSingle();
+      if (titleRow?.value) setAppTitle(titleRow.value);
+    } catch (e) { /* app_settings table not yet created — keep default */ }
     setLoaded(true);
   }, []);
 
@@ -526,6 +814,19 @@ export default function App() {
   const handleRegister = async (u) => { const created = await db.createUser(u); handleLogin(created); setUsers(prev => [...prev, created]); };
   const handleLogout = () => { setCU(null); localStorage.removeItem("pt-user"); };
 
+  const saveTitle = async () => {
+    const t = titleDraft.trim();
+    setEditingTitle(false);
+    if (!t || t === appTitle) return;
+    setAppTitle(t);
+    try {
+      await supabase.from("app_settings").upsert({ key: "app_title", value: t, updated_at: new Date().toISOString() });
+      await db.addLog({ item_id: null, user_id: currentUser.id, user_name: currentUser.name, user_role: currentUser.role, message: `タイトルを「${t}」に変更` });
+    } catch (e) {
+      alert("タイトルの保存に失敗しました。migration-v3.sql を実行済みか確認してください。");
+    }
+  };
+
   const handleAdd = async (f, cq) => {
     const created = await db.createItem({ style_no: f.styleNo, name: f.name, season: f.season, factory: f.factory, unit_price: f.unitPrice, patterner: f.patterner, supplier: f.supplier, has_secondary: f.hasSecondary, secondary_name: f.secName, secondary_address: f.secAddress, secondary_phone: f.secPhone, notes: f.notes, delivery_date: f.deliveryDate || null });
     if (cq.length > 0) await db.setItemColorSizes(created.id, cq.map(r => ({ color_code: r.colorCode, size_code: r.sizeCode, qty: r.qty })));
@@ -537,7 +838,7 @@ export default function App() {
   };
 
   if (!loaded) return <div className="flex items-center justify-center min-h-screen text-[var(--text-secondary)]">読み込み中...</div>;
-  if (!currentUser) return <LoginScreen users={users} onLogin={handleLogin} onRegister={handleRegister} />;
+  if (!currentUser) return <LoginScreen users={users} onLogin={handleLogin} onRegister={handleRegister} appTitle={appTitle} />;
 
   // ── Filtering ──
   const seasons = [...new Set(items.map(i => i.season))].sort();
@@ -622,7 +923,21 @@ export default function App() {
       {/* Header */}
       <div className="max-w-[960px] mx-auto mb-4 flex justify-between items-start flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight font-mono">量産進捗</h1>
+          {editingTitle ? (
+            <input
+              autoFocus
+              className="text-xl font-semibold tracking-tight font-mono bg-[var(--bg-secondary)] border-[1.5px] border-[var(--border)] rounded px-2 py-0.5 outline-none text-[var(--text-primary)] w-[220px]"
+              value={titleDraft}
+              onChange={e => setTitleDraft(e.target.value)}
+              onBlur={saveTitle}
+              onKeyDown={e => { if (e.key === "Enter") saveTitle(); if (e.key === "Escape") setEditingTitle(false); }}
+            />
+          ) : (
+            <h1 className="text-xl font-semibold tracking-tight font-mono cursor-pointer group flex items-center gap-2" onClick={() => { setTitleDraft(appTitle); setEditingTitle(true); }} title="クリックで編集">
+              {appTitle}
+              <span className="text-xs text-[var(--text-secondary)] opacity-0 group-hover:opacity-60 transition-opacity">✎</span>
+            </h1>
+          )}
           <div className="mt-1.5 flex gap-3 sm:gap-4 font-mono text-xs text-[var(--text-secondary)] flex-wrap">
             <span>{activeItems.length}型 進行中</span>
             <span>{doneN}完了</span>
@@ -638,6 +953,7 @@ export default function App() {
           </div>
           <button onClick={() => setShowMasters(true)} className="px-3 py-1.5 rounded border-[1.5px] border-[var(--border)] bg-transparent text-[var(--text-secondary)] text-xs font-mono cursor-pointer">⚙</button>
           <button onClick={() => setShowLog(!showLog)} className="px-3 py-1.5 rounded border-[1.5px] border-[var(--border)] bg-transparent text-[var(--text-secondary)] text-xs font-mono cursor-pointer">履歴</button>
+          <button onClick={() => setShowCSV(true)} className="px-3 py-1.5 rounded border-[1.5px] border-[var(--border)] bg-transparent text-[var(--text-secondary)] text-xs font-mono cursor-pointer">📥 CSV</button>
           <button onClick={() => setShowAdd(true)} className="px-3.5 py-1.5 rounded border-none bg-[var(--text-primary)] text-[var(--bg-primary)] text-xs font-semibold cursor-pointer font-mono">+ 追加</button>
         </div>
       </div>
@@ -695,6 +1011,8 @@ export default function App() {
       )}
 
       {showAdd && <ItemFormModal onSave={handleAdd} onClose={() => setShowAdd(false)} colors={colors} sizes={sizes} title="+ 新規アイテム" />}
+
+      {showCSV && <CSVImportModal onClose={() => setShowCSV(false)} onImported={loadAll} existingItems={items} colors={colors} sizes={sizes} currentUser={currentUser} />}
 
       {showMasters && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[1002]" onClick={() => setShowMasters(false)}>
